@@ -6,4 +6,4 @@ plotly==6.1.2
 scikit-learn==1.7.0
 matplotlib==3.10.3
 keras==3.10.0
-tensorflow==2.19.0
+tensorflow==2.13.0
