@@ -240,9 +240,8 @@ elif page == "📈 Compare":
 elif page == "👥 Buy":
     st.subheader("👥 Buy Stocks")
 
-    ticker = st.text_input("Enter Stock Ticker (e.g., AAPL)", " ")
+    st.write(f"Buying for: {ticker}")
     quantity = st.number_input("Enter Quantity", min_value=1, value=1)
-    model_choice = st.selectbox("Select Prediction Model", ["Linear Regression", "Random Forest", "LSTM"])
     predict_days = st.slider("Predict Future Price for (days)", 1, 30, 7)
 
     if st.button("Predict Before Buying"):
@@ -257,149 +256,112 @@ elif page == "👥 Buy":
         df = data.copy()
         df['Date'] = pd.to_datetime(df.index)
         df = df[['Date', 'Close']].dropna()
-    
-        future_dates = pd.date_range(start=df['Date'].max() + pd.Timedelta(days=1), periods=predict_days)
-        predicted = []
-
-        if model_choice == "Linear Regression":
-            model = LinearRegression()
-            X = np.array(range(len(df))).reshape(-1, 1)
-            y = df['Close'].values
-            model.fit(X, y)
-            future_X = np.array(range(len(df), len(df) + predict_days)).reshape(-1, 1)
-            prediction = model.predict(future_X)
-            predicted = prediction.flatten()
-
-        elif model_choice == "Random Forest":
-            model = RandomForestRegressor(n_estimators=100)
-            X = np.array(range(len(df))).reshape(-1, 1)
-            y = df['Close'].values
-            model.fit(X, y)
-            future_X = np.array(range(len(df), len(df) + predict_days)).reshape(-1, 1)
-            prediction = model.predict(future_X)
-            predicted = prediction.flatten()
-
-        elif model_choice == "LSTM":
-            scaler = MinMaxScaler()
-            scaled_data = scaler.fit_transform(df['Close'].values.reshape(-1, 1))
-            X_lstm, y_lstm = [], []
-            for i in range(60, len(scaled_data)):
-                X_lstm.append(scaled_data[i - 60:i, 0])
-                y_lstm.append(scaled_data[i, 0])
-            X_lstm, y_lstm = np.array(X_lstm), np.array(y_lstm)
-            X_lstm = np.reshape(X_lstm, (X_lstm.shape[0], X_lstm.shape[1], 1))
-
-            if len(X_lstm) == 0:
-                st.error("Not enough data for LSTM. Try a different ticker or later date range.")
-                st.stop()
-
-            model = Sequential()
-            model.add(LSTM(units=50, return_sequences=True, input_shape=(X_lstm.shape[1], 1)))
-            model.add(LSTM(units=50))
-            model.add(Dense(1))
-            model.compile(optimizer='adam', loss='mean_squared_error')
-            model.fit(X_lstm, y_lstm, epochs=5, batch_size=32, verbose=0)
-
-            test_input = scaled_data[-60:]
-            predicted = []
-            for _ in range(predict_days):
-                pred = model.predict(test_input.reshape(1, 60, 1), verbose=0)
-                predicted.append(pred[0][0])
-                test_input = np.append(test_input[1:], pred).reshape(60, 1)
-
-            predicted = scaler.inverse_transform(np.array(predicted).reshape(-1, 1)).flatten()
-
-        # Price and ROI Calculation
         y_actual = df['Close'].values
         current_price = float(y_actual[-1])
         currency = "₹" if ticker.endswith(".NS") else "$"
-        st.session_state.current_price = current_price
-        st.session_state.currency = currency
-        future_price = float(predicted[-1])
-        roi = ((future_price - current_price) / current_price) * 100
+        future_dates = pd.date_range(start=df['Date'].max() + pd.Timedelta(days=1), periods=predict_days)
+
+        predictions = {}
+        roi_results = {}
+
+        # ----- Linear Regression -----
+        model_lr = LinearRegression()
+        X = np.array(range(len(df))).reshape(-1, 1)
+        y = df['Close'].values
+        model_lr.fit(X, y)
+        future_X = np.array(range(len(df), len(df) + predict_days)).reshape(-1, 1)
+        pred_lr = model_lr.predict(future_X).flatten()
+        predictions['Linear Regression'] = pred_lr
+        roi_results['Linear Regression'] = ((pred_lr[-1] - current_price) / current_price) * 100
+
+        # ----- Random Forest -----
+        model_rf = RandomForestRegressor(n_estimators=100)
+        model_rf.fit(X, y)
+        pred_rf = model_rf.predict(future_X).flatten()
+        predictions['Random Forest'] = pred_rf
+        roi_results['Random Forest'] = ((pred_rf[-1] - current_price) / current_price) * 100
+
+        # ----- LSTM -----
+        scaler = MinMaxScaler()
+        scaled_data = scaler.fit_transform(df['Close'].values.reshape(-1, 1))
+        X_lstm, y_lstm = [], []
+        for i in range(60, len(scaled_data)):
+            X_lstm.append(scaled_data[i - 60:i, 0])
+            y_lstm.append(scaled_data[i, 0])
+        X_lstm, y_lstm = np.array(X_lstm), np.array(y_lstm)
+        X_lstm = np.reshape(X_lstm, (X_lstm.shape[0], X_lstm.shape[1], 1))
+
+        pred_lstm = []
+        if len(X_lstm) > 0:
+            model_lstm = Sequential()
+            model_lstm.add(LSTM(units=50, return_sequences=True, input_shape=(X_lstm.shape[1], 1)))
+            model_lstm.add(LSTM(units=50))
+            model_lstm.add(Dense(1))
+            model_lstm.compile(optimizer='adam', loss='mean_squared_error')
+            model_lstm.fit(X_lstm, y_lstm, epochs=5, batch_size=32, verbose=0)
+
+            test_input = scaled_data[-60:]
+            for _ in range(predict_days):
+                pred = model_lstm.predict(test_input.reshape(1, 60, 1), verbose=0)
+                pred_lstm.append(pred[0][0])
+                test_input = np.append(test_input[1:], pred).reshape(60, 1)
+
+            pred_lstm = scaler.inverse_transform(np.array(pred_lstm).reshape(-1, 1)).flatten()
+            predictions['LSTM'] = pred_lstm
+            roi_results['LSTM'] = ((pred_lstm[-1] - current_price) / current_price) * 100
+        else:
+            pred_lstm = np.full(predict_days, current_price)
+            predictions['LSTM'] = pred_lstm
+            roi_results['LSTM'] = 0.0
 
         st.metric("Current Price", f"{currency}{current_price:.2f}")
-        st.metric(f"Predicted Price (+{predict_days}d)", f"{currency}{future_price:.2f}")
-        st.metric("Projected ROI", f"{roi:.2f}%")
 
-        # Historical + Predicted Price Chart
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=pd.concat([df['Date'], pd.Series(future_dates)]),
-            y = np.concatenate([y_actual.ravel(), predicted.ravel()]),
-            mode='lines+markers',
-            name='Price Forecast',
-            line=dict(color='orange')
-        ))
-        fig.update_layout(
-            title="📉 Historical + Predicted Prices", 
-            xaxis_title="Date", 
-            yaxis_title="Price",
-            autosize=True,
-            height=400,
-            margin=dict(l=20, r=20, t=30, b=20),
-            legend=dict(orientation="h"),  # better for mobile
-            plot_bgcolor='white',
-            paper_bgcolor='white'
-            )
-        st.plotly_chart(fig)
+        model_colors = {
+            "Linear Regression": "orange",
+            "Random Forest": "green",
+            "LSTM": "purple"
+        }
 
-        # Historical ROI Chart
-        y_actual = y_actual.ravel()
-        start_price = y_actual[0]
-        historical_roi = ((y_actual - start_price) / start_price) * 100
-        df['Date'] = pd.to_datetime(df['Date'])
-        fig_hist_roi = go.Figure()
-        fig_hist_roi.add_trace(go.Scatter(
-            x=df['Date'][:len(historical_roi)],
-            y=historical_roi,
-            mode='lines+markers',
-            name='Historical ROI (%)',
-            line=dict(color='blue')
-        ))
-        fig_hist_roi.update_layout(
-            title="📊 Historical ROI Over Time", 
-            xaxis_title="Date", 
-            yaxis_title="ROI (%)",
-            autosize=True,
-            height=400,
-            margin=dict(l=20, r=20, t=30, b=20),
-            legend=dict(orientation="h"),  # better for mobile
-            plot_bgcolor='white',
-            paper_bgcolor='white'
-        )
-        st.plotly_chart(fig_hist_roi)
+        for model_name, pred in predictions.items():
+            st.subheader(f"📉 {model_name} Forecast")
+            fig_model = go.Figure()
+            fig_model.add_trace(go.Scatter(x=df['Date'], y=y_actual, mode='lines', name='Historical', line=dict(color='gray')))
+            fig_model.add_trace(go.Scatter(x=future_dates, y=pred, mode='lines+markers', name=f'{model_name} Forecast', line=dict(color=model_colors[model_name], width=2)))
+            fig_model.update_layout(title=f"{model_name} - Historical + Forecast", xaxis_title="Date", yaxis_title="Price", height=350, plot_bgcolor='white', paper_bgcolor='white', margin=dict(l=10, r=10, t=30, b=20), legend=dict(orientation="h"))
+            st.plotly_chart(fig_model, use_container_width=True)
 
-        # Projected ROI Chart
-        roi_values = [(p - current_price) / current_price * 100 for p in predicted]
-        fig_roi = go.Figure()
-        fig_roi.add_trace(go.Scatter(
-            x=future_dates,
-            y=roi_values,
-            mode='lines+markers',
-            name='Projected ROI (%)',
-            line=dict(color='green')
-        ))
-        fig_roi.update_layout(
-            title="📈 Projected ROI Over Future Days", 
-            xaxis_title="Date", 
-            yaxis_title="ROI (%)",
-            autosize=True,
-            height=400,
-            margin=dict(l=20, r=20, t=30, b=20),
-            legend=dict(orientation="h"),  # better for mobile
-            plot_bgcolor='white',
-            paper_bgcolor='white'
-            )
-        st.plotly_chart(fig_roi)
+        st.markdown("## 📊 ROI Projection per Model")
+        for model_name, pred in predictions.items():
+            future_roi = [(p - current_price) / current_price * 100 for p in pred]
+            fig_roi = go.Figure()
+            fig_roi.add_trace(go.Scatter(x=future_dates, y=future_roi, mode='lines+markers', name='Projected ROI', line=dict(color=model_colors[model_name], width=2)))
+            fig_roi.update_layout(title=f"{model_name} ROI (%)", xaxis_title="Date", yaxis_title="ROI (%)", height=300, plot_bgcolor='white', paper_bgcolor='white', margin=dict(l=10, r=10, t=30, b=20), legend=dict(orientation="h"))
+            st.plotly_chart(fig_roi, use_container_width=True)
 
-        # Recommendation
-        if roi > 5:
-            st.success("📈 Recommendation: Good to Buy based on prediction!")
-        elif roi > 0:
-            st.info("⚠ Marginal ROI. Buy if confident.")
+        st.markdown("## 📋 Model Comparison Summary")
+        summary_data = []
+        for model_name, pred in predictions.items():
+            future_price = float(pred[-1])
+            roi = roi_results[model_name]
+            summary_data.append({"Model": model_name, "Predicted Price": f"{currency}{future_price:.2f}", "Projected ROI (%)": round(roi, 2)})
+        df_summary = pd.DataFrame(summary_data)
+        def highlight_roi(val): return 'color: green' if val > 0 else 'color: red'
+        st.dataframe(df_summary.style.applymap(highlight_roi, subset=["Projected ROI (%)"]))
+
+        best_model = max(roi_results, key=roi_results.get)
+        best_roi = roi_results[best_model]
+        best_price = predictions[best_model][-1]
+
+        st.markdown("## ✅ Final Suggestion")
+        if best_roi > 5:
+            st.success(f"📈 **Recommendation**: Based on prediction, **{best_model}** gives best ROI: **{best_roi:.2f}%**\n\nPredicted price: **{currency}{best_price:.2f}**")
+        elif best_roi > 0:
+            st.info(f"⚠️ ROI is positive but moderate. Best model: **{best_model}** with ROI **{best_roi:.2f}%**.")
         else:
-            st.warning("📉 Prediction suggests a potential drop. Consider waiting.")
+            st.warning(f"📉 All models predict decline. Best option is **{best_model}**, but ROI is negative: **{best_roi:.2f}%**. Consider waiting.")
+
+        st.session_state.current_price = current_price
+        st.session_state.currency = currency
 
     if st.button("Confirm Purchase"):
         if "current_price" not in st.session_state:
@@ -407,7 +369,6 @@ elif page == "👥 Buy":
         else:
             current_price = st.session_state.current_price
             currency = st.session_state.currency
-
             try:
                 with open("portfolio.json", "r") as f:
                     portfolio = json.load(f)
@@ -481,7 +442,8 @@ elif page == "📁 Portfolio":
         for symbol, info in portfolio.items():
             try:
                 stock = yf.Ticker(symbol)
-                price_data = stock.history(period="1d")
+                price_data = stock.history(start=datetime.today() - timedelta(days=5), end=datetime.today())
+                price_data = price_data[price_data["Close"].notna()]
                 if price_data.empty:
                     st.warning(f"No data for {symbol}")
                     continue
@@ -536,7 +498,9 @@ elif page == "📁 Portfolio":
             st.plotly_chart(fig3,use_container_width=True)
 
             csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button("⬇️ Download Portfolio", csv, "portfolio.csv", "text/csv")
+            st.download_button("⬇️ Download Portfolio", csv, "portfolio.csv", "text/csv") 
+
+#Fibonacci
 elif page == "📐 Fibonacci":
     st.header("📐 Fibonacci Retracement Calculator")
 
