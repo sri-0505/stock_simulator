@@ -590,4 +590,4 @@ elif page == "📐 Fibonacci":
             st.plotly_chart(fig, use_container_width=True)
 
     except Exception as e:
-        st.error(f"Error fetching data: {e}")
+        st.error(f"Error fetching data: {e}")# trigger rebuild
